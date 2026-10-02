@@ -16,6 +16,7 @@ import System.IO.Silently (capture_)
 
 data Type
   = TInt
+  | TFloat
   | TBool
   | TVoid
   deriving (Show, Eq)
@@ -28,6 +29,7 @@ data BinOp
 
 data Expr
   = Lit   Int
+  | FLit  Float
   | BLit  Bool
   | Var   String
   | BinE  BinOp Expr Expr
@@ -58,8 +60,9 @@ data FunDecl = FunDecl
 
 -- programas lidam com inteiros e booleanos
 data Value
-  = VInt  Int
-  | VBool Bool
+  = VInt    Int
+  | VFloat  Float
+  | VBool   Bool
   | VVoid
   deriving (Show, Eq)
 
@@ -86,6 +89,7 @@ evalExpr :: FunEnv -> Env -> Expr -> IO Value
 evalExpr fenv env expr = case expr of
 
   Lit  n -> return (VInt n)
+  FLit f -> return (VFloat f)
   BLit b -> return (VBool b)
 
   Var x  -> case Map.lookup x env of
@@ -123,21 +127,48 @@ evalExpr fenv env expr = case expr of
               Next _       -> return VVoid
 
 -- ============================================================
+-- Funções auxiliares
+-- ============================================================
+
+convert :: Value -> Value -> (Value, Value)
+convert (VInt a) (VInt b) = (VInt a, VInt b)
+convert (VInt a) (VFloat b) = (VFloat (fromIntegral a), VFloat b)
+convert (VFloat a) (VInt b) = (VFloat a, VFloat (fromIntegral b))
+convert (VFloat a) (VFloat b) = (VFloat a, VFloat b)
+
+-- ============================================================
 -- evalBinOp — permanece pura
 -- ============================================================
 
 evalBinOp :: BinOp -> Value -> Value -> Value
-evalBinOp Add (VInt  a) (VInt  b) = VInt  (a + b)
-evalBinOp Sub (VInt  a) (VInt  b) = VInt  (a - b)
-evalBinOp Mul (VInt  a) (VInt  b) = VInt  (a * b)
-evalBinOp Div (VInt  a) (VInt  b) = VInt  (a `div` b)
-evalBinOp Mod (VInt  a) (VInt  b) = VInt  (a `mod` b)
+evalBinOp Add a b = case convert a b of
+    (VInt x, VInt y)    -> VInt (x + y)
+    (VFloat x, VFloat y) -> VFloat (x + y)
+evalBinOp Sub a b = case convert a b of
+    (VInt x, VInt y)    -> VInt (x - y)
+    (VFloat x, VFloat y) -> VFloat (x - y)
+evalBinOp Mul a b = case convert a b of
+    (VInt x, VInt y)    -> VInt (x * y)
+    (VFloat x, VFloat y) -> VFloat (x * y)
+evalBinOp Div a b = case convert a b of
+    (VInt x, VInt y)    -> VInt (x `div` y)
+    (VFloat x, VFloat y) -> VFloat (x / y)
+evalBinOp Mod a b = case convert a b of
+    (VInt x, VInt y)    -> VInt (x `mod` y)
 evalBinOp Eq  va        vb        = VBool (va == vb)
 evalBinOp Neq va        vb        = VBool (va /= vb)
-evalBinOp Lt  (VInt  a) (VInt  b) = VBool (a <  b)
-evalBinOp Gt  (VInt  a) (VInt  b) = VBool (a >  b)
-evalBinOp Le  (VInt  a) (VInt  b) = VBool (a <= b)
-evalBinOp Ge  (VInt  a) (VInt  b) = VBool (a >= b)
+evalBinOp Lt  a b = case convert a b of
+    (VInt x, VInt y)    -> VBool (x < y)
+    (VFloat x, VFloat y) -> VBool (x < y)
+evalBinOp Gt  a b = case convert a b of
+    (VInt x, VInt y)    -> VBool (x > y)
+    (VFloat x, VFloat y) -> VBool (x > y)
+evalBinOp Le  a b = case convert a b of
+    (VInt x, VInt y)    -> VBool (x <= y)
+    (VFloat x, VFloat y) -> VBool (x <= y)
+evalBinOp Ge  a b = case convert a b of
+    (VInt x, VInt y)    -> VBool (x >= y)
+    (VFloat x, VFloat y) -> VBool (x >= y)
 evalBinOp And (VBool a) (VBool b) = VBool (a && b)
 evalBinOp Or  (VBool a) (VBool b) = VBool (a || b)
 evalBinOp op  _         _         =
@@ -214,6 +245,7 @@ execBlock fenv env (s:ss) = do
 
 showValue :: Value -> String
 showValue (VInt  n) = show n
+showValue (VFloat f) = show f
 showValue (VBool b) = if b then "verdadeiro" else "falso"
 showValue VVoid     = "()"
 
@@ -337,6 +369,44 @@ prog7 = Block
 prog8 :: Stmt
 prog8 = Print (Call "dobro" [Lit 4])
 
+-- testa soma de inteiro com float: int x = 15; float y = 2.5; retorna x + y;
+prog9 :: Stmt
+prog9 = Block
+  [ Decl TInt "x" (Lit 15)
+  , Decl TFloat "y" (FLit 2.5)
+  , Return (BinE Add (Var "x") (Var "y"))
+  ]
+
+-- testa soma de float com inteiro: float y = 2.5; int x = 15; retorna y + x;
+prog10 :: Stmt
+prog10 = Block
+  [ Decl TFloat "y" (FLit 2.5)
+  , Decl TInt "x" (Lit 15)
+  , Return (BinE Add (Var "y") (Var "x"))
+  ]
+
+-- testa divisão de float com inteiro: float y = 5.8; int x = 2; retorna y / x;
+prog11 :: Stmt
+prog11 = Block
+  [ Decl TFloat "y" (FLit 5.8)
+  , Decl TInt "x" (Lit 2)
+  , Return (BinE Div (Var "y") (Var "x"))
+  ]
+
+-- testa divisão de inteiro com float: int x = 5; float y = 2.5; retorna y / x;
+prog12 :: Stmt
+prog12 = Block
+  [ Decl TInt "x" (Lit 5)
+  , Decl TFloat "y" (FLit 2.5)
+  , Return (BinE Div (Var "x") (Var "y"))
+  ]
+
+prog13 :: Stmt 
+prog13 = Block
+  [ Decl TInt "x" (Lit 3)
+  , Decl TFloat "y" (FLit 2.5)
+  , Return (BinE Lt (Var "x") (Var "y"))
+  ]
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -385,6 +455,32 @@ testImprimeCallDobro = TestCase $ do
   output <- runProgIO fenvExemplo prog8
   assertEqual "imprime dobro(4)" "8\n" output
 
+-- testes de conversão de tipos (int + float)
+testSomaIntFloat :: Test
+testSomaIntFloat = TestCase $ do
+    v <- runProg Map.empty prog9
+    assertEqual "soma int + float" (VFloat 17.5) v
+
+testSomaFloatInt :: Test
+testSomaFloatInt = TestCase $ do
+    v <- runProg Map.empty prog10
+    assertEqual "soma float + int" (VFloat 17.5) v
+
+testDivFloatInt :: Test
+testDivFloatInt = TestCase $ do
+    v <- runProg Map.empty prog11
+    assertEqual "divisao float / int" (VFloat 2.9) v
+
+testDivIntFloat :: Test
+testDivIntFloat = TestCase $ do
+    v <- runProg Map.empty prog12
+    assertEqual "divisao int / float" (VFloat 2.0) v
+
+testComparacaoIntFloat :: Test
+testComparacaoIntFloat = TestCase $ do
+    v <- runProg Map.empty prog13
+    assertEqual "comparacao int < float" (VBool False) v
+
 -- suite completa
 
 suite :: Test
@@ -397,6 +493,11 @@ suite = TestList
   , TestLabel "chamada aninhada"     testChamadaAninhada
   , TestLabel "while imprime"        testWhileImprime
   , TestLabel "imprime call dobro"   testImprimeCallDobro
+  , TestLabel "soma int float"       testSomaIntFloat
+  , TestLabel "soma float int"       testSomaFloatInt
+  , TestLabel "divisao float int"    testDivFloatInt
+  , TestLabel "divisao int float"    testDivIntFloat
+  , TestLabel "comparacao int float" testComparacaoIntFloat
   ]
 
 main :: IO ()
