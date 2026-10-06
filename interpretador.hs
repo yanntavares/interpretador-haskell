@@ -6,6 +6,7 @@ import Data.Map (Map)
 import qualified Data.Map as Map
 import Test.HUnit
 import System.IO.Silently (capture_)
+import Data.List (intercalate)
 
 -- Map é usado para armazenar os identificadores do programa
 -- Funcões utilizadas: Map.empty, Map.insert e Map.lookup
@@ -19,6 +20,7 @@ data Type
   | TFloat
   | TBool
   | TVoid
+  | TArray Type
   deriving (Show, Eq)
 
 data BinOp
@@ -31,6 +33,7 @@ data Expr
   = Lit   Int
   | FLit  Float
   | BLit  Bool
+  | ArrayLit [Expr]
   | Var   String
   | BinE  BinOp Expr Expr
   | Not   Expr
@@ -63,6 +66,7 @@ data Value
   = VInt    Int
   | VFloat  Float
   | VBool   Bool
+  | VArray [Value]
   | VVoid
   deriving (Show, Eq)
 
@@ -91,6 +95,10 @@ evalExpr fenv env expr = case expr of
   Lit  n -> return (VInt n)
   FLit f -> return (VFloat f)
   BLit b -> return (VBool b)
+-- mapM já trata listas vazias
+  ArrayLit exprs -> do
+      values <- mapM (evalExpr fenv env) exprs
+      return (VArray values)
 
   Var x  -> case Map.lookup x env of
                Nothing -> error ("Variavel nao declarada: " ++ x)
@@ -247,6 +255,7 @@ showValue :: Value -> String
 showValue (VInt  n) = show n
 showValue (VFloat f) = show f
 showValue (VBool b) = if b then "verdadeiro" else "falso"
+showValue (VArray vs) = "[" ++ intercalate ", " (map showValue vs) ++ "]"
 showValue VVoid     = "()"
 
 -- ============================================================
@@ -401,12 +410,35 @@ prog12 = Block
   , Return (BinE Div (Var "x") (Var "y"))
   ]
 
+-- testa comparação de inteiro com float: int x = 3; float y = 2.5; retorna x < y;
 prog13 :: Stmt 
 prog13 = Block
   [ Decl TInt "x" (Lit 3)
   , Decl TFloat "y" (FLit 2.5)
   , Return (BinE Lt (Var "x") (Var "y"))
   ]
+
+-- testa declaração de array de inteiros
+prog14 :: Stmt
+prog14 = Block
+  [ Decl (TArray TInt) "array" (ArrayLit [Lit 1, Lit 2, Lit 3, Lit 4])
+  , Return (Var "array")
+  ]
+
+-- testa declaração de array de floats
+prog15 :: Stmt
+prog15 = Block
+  [ Decl (TArray TFloat) "array" (ArrayLit [FLit 1.1, FLit 2.2, FLit 3.3])
+  , Return (Var "array")
+  ]
+
+-- testa declaração de array de bool
+prog16 :: Stmt
+prog16 = Block
+  [ Decl (TArray TBool) "array" (ArrayLit [BLit True, BLit False, BLit True])
+  , Return (Var "array")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -481,6 +513,21 @@ testComparacaoIntFloat = TestCase $ do
     v <- runProg Map.empty prog13
     assertEqual "comparacao int < float" (VBool False) v
 
+testArrayInt :: Test
+testArrayInt = TestCase $ do
+    v <- runProg Map.empty prog14
+    assertEqual "declaracao de Array de inteiros" (VArray [VInt 1, VInt 2, VInt 3, VInt 4]) v
+
+testArrayFloat :: Test
+testArrayFloat = TestCase $ do
+    v <- runProg Map.empty prog15
+    assertEqual "declaracao de Array de floats" (VArray [VFloat 1.1, VFloat 2.2, VFloat 3.3]) v
+
+testArrayBool :: Test
+testArrayBool = TestCase $ do
+    v <- runProg Map.empty prog16
+    assertEqual "declaracao de Array de booleans" (VArray [VBool True, VBool False, VBool True]) v
+
 -- suite completa
 
 suite :: Test
@@ -498,6 +545,9 @@ suite = TestList
   , TestLabel "divisao float int"    testDivFloatInt
   , TestLabel "divisao int float"    testDivIntFloat
   , TestLabel "comparacao int float" testComparacaoIntFloat
+  , TestLabel "array int"            testArrayInt
+  , TestLabel "array float"          testArrayFloat
+  , TestLabel "array bool"           testArrayBool
   ]
 
 main :: IO ()
