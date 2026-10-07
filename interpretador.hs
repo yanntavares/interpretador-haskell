@@ -311,12 +311,23 @@ funSoma = FunDecl
   , funBody   = Return (BinE Add (Var "a") (Var "b"))
   }
 
+-- int imprime(int x) { imprime(x); retorna x; }
+funImprime :: FunDecl
+funImprime = FunDecl
+  { funName   = "imprime"
+  , funParams = [(TInt, "x")]
+  , funBody   = Block [Print (Var "x"), Return (Var "x")]
+  }
+
 fenvExemplo :: FunEnv
 fenvExemplo = Map.fromList
   [ ("dobro",    funDobro)
   , ("fatorial", funFatorial)
   , ("soma",     funSoma)
   ]
+
+fenvOrdem :: FunEnv
+fenvOrdem = Map.insert "imprime" funImprime fenvExemplo
 
 -- ============================================================
 -- Programas de teste
@@ -439,6 +450,10 @@ prog16 = Block
   , Return (Var "array")
   ]
 
+-- imprime(soma(imprime(1), imprime(2)))
+prog17 :: Stmt
+prog17 = Print (Call "soma" [Call "imprime" [Lit 1], Call "imprime" [Lit 2]])
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -486,6 +501,11 @@ testImprimeCallDobro :: Test
 testImprimeCallDobro = TestCase $ do
   output <- runProgIO fenvExemplo prog8
   assertEqual "imprime dobro(4)" "8\n" output
+
+testOrdemArgumentos :: Test
+testOrdemArgumentos = TestCase $ do
+  output <- runProgIO fenvOrdem prog17
+  assertEqual "argumentos avaliados da esquerda para a direita" "1\n2\n3\n" output
 
 -- testes de conversão de tipos (int + float)
 testSomaIntFloat :: Test
@@ -548,6 +568,7 @@ suite = TestList
   , TestLabel "array int"            testArrayInt
   , TestLabel "array float"          testArrayFloat
   , TestLabel "array bool"           testArrayBool
+  , TestLabel "ordem dos argumentos" testOrdemArgumentos
   ]
 
 main :: IO ()
