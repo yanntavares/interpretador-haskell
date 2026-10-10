@@ -128,7 +128,8 @@ evalExpr fenv env expr = case expr of
           else do
             vals <- mapM (evalExpr fenv env) args
             let params   = map snd (funParams fun)
-                envLocal = Map.fromList (zip params vals)
+                -- globais + locais: parametros (a esquerda) tem prioridade
+                envLocal = Map.union (Map.fromList (zip params vals)) env
             result <- execStmt fenv envLocal (funBody fun)
             case result of
               Returned v _ -> return v
@@ -319,12 +320,23 @@ funImprime = FunDecl
   , funBody   = Block [Print (Var "x"), Return (Var "x")]
   }
 
+-- int somaGlobal(int x) { retorna x + g; }   (g eh variavel global)
+funSomaGlobal :: FunDecl
+funSomaGlobal = FunDecl
+  { funName   = "somaGlobal"
+  , funParams = [(TInt, "x")]
+  , funBody   = Return (BinE Add (Var "x") (Var "g"))
+  }
+
 fenvExemplo :: FunEnv
 fenvExemplo = Map.fromList
   [ ("dobro",    funDobro)
   , ("fatorial", funFatorial)
   , ("soma",     funSoma)
   ]
+
+fenvGlobal :: FunEnv
+fenvGlobal = Map.insert "somaGlobal" funSomaGlobal fenvExemplo
 
 fenvOrdem :: FunEnv
 fenvOrdem = Map.insert "imprime" funImprime fenvExemplo
@@ -454,6 +466,20 @@ prog16 = Block
 prog17 :: Stmt
 prog17 = Print (Call "soma" [Call "imprime" [Lit 1], Call "imprime" [Lit 2]])
 
+-- int g = 10; retorna somaGlobal(5);   (funcao enxerga a global g)
+prog18 :: Stmt
+prog18 = Block
+  [ Decl TInt "g" (Lit 10)
+  , Return (Call "somaGlobal" [Lit 5])
+  ]
+
+-- int n = 100; retorna dobro(5);   (parametro x nao conflita com global)
+prog19 :: Stmt
+prog19 = Block
+  [ Decl TInt "x" (Lit 100)
+  , Return (Call "dobro" [Lit 5])
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -548,6 +574,18 @@ testArrayBool = TestCase $ do
     v <- runProg Map.empty prog16
     assertEqual "declaracao de Array de booleans" (VArray [VBool True, VBool False, VBool True]) v
 
+-- testes de variaveis globais em funcoes
+
+testVariavelGlobal :: Test
+testVariavelGlobal = TestCase $ do
+    v <- runProg fenvGlobal prog18
+    assertEqual "funcao enxerga variavel global" (VInt 15) v
+
+testParametroSobrepoeGlobal :: Test
+testParametroSobrepoeGlobal = TestCase $ do
+    v <- runProg fenvExemplo prog19
+    assertEqual "parametro tem prioridade sobre global de mesmo nome" (VInt 10) v
+
 -- suite completa
 
 suite :: Test
@@ -569,6 +607,8 @@ suite = TestList
   , TestLabel "array float"          testArrayFloat
   , TestLabel "array bool"           testArrayBool
   , TestLabel "ordem dos argumentos" testOrdemArgumentos
+  , TestLabel "variavel global"      testVariavelGlobal
+  , TestLabel "parametro sobrepoe global" testParametroSobrepoeGlobal
   ]
 
 main :: IO ()
