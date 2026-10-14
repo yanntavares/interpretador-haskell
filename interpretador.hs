@@ -7,6 +7,7 @@ import qualified Data.Map as Map
 import Test.HUnit
 import System.IO.Silently (capture_)
 import Data.List (intercalate)
+import Control.Exception (try, evaluate, ErrorCall)
 
 -- Map é usado para armazenar os identificadores do programa
 -- Funcões utilizadas: Map.empty, Map.insert e Map.lookup
@@ -145,6 +146,24 @@ convert (VInt a) (VFloat b) = (VFloat (fromIntegral a), VFloat b)
 convert (VFloat a) (VInt b) = (VFloat a, VFloat (fromIntegral b))
 convert (VFloat a) (VFloat b) = (VFloat a, VFloat b)
 
+-- verifica se um valor pode ser guardado numa variavel do tipo declarado
+-- (sem conversao: float y = 2 eh erro)
+compativel :: Type -> Value -> Bool
+compativel TInt       (VInt _)    = True
+compativel TFloat     (VFloat _)  = True
+compativel TBool      (VBool _)   = True
+compativel (TArray t) (VArray vs) = all (compativel t) vs
+compativel _          _           = False
+
+-- verifica se dois valores tem o mesmo tipo (usado na atribuicao)
+-- limitacao: qualquer array eh aceito no lugar de outro array
+mesmoTipo :: Value -> Value -> Bool
+mesmoTipo (VInt _)   (VInt _)   = True
+mesmoTipo (VFloat _) (VFloat _) = True
+mesmoTipo (VBool _)  (VBool _)  = True
+mesmoTipo (VArray _) (VArray _) = True
+mesmoTipo _          _          = False
+
 -- ============================================================
 -- evalBinOp — permanece pura
 -- ============================================================
@@ -198,18 +217,20 @@ execStmt fenv env stmt = case stmt of
     putStrLn (showValue v)
     return (Next env)
 
-  Decl _ x e -> do
+  Decl t x e -> do
     v <- evalExpr fenv env e
-    let env' = Map.insert x v env
-    return (Next env')
+    if compativel t v
+      then return (Next (Map.insert x v env))
+      else error ("Tipo incompativel na declaracao de " ++ x)
 
   Assign x e ->
     case Map.lookup x env of
-      Nothing -> error ("Variavel nao declarada: " ++ x)
-      Just _  -> do
+      Nothing      -> error ("Variavel nao declarada: " ++ x)
+      Just vAntigo -> do
         v <- evalExpr fenv env e
-        let env' = Map.insert x v env
-        return (Next env')
+        if mesmoTipo vAntigo v
+          then return (Next (Map.insert x v env))
+          else error ("Tipo incompativel na atribuicao de " ++ x)
 
   If cond t f -> do
     v <- evalExpr fenv env cond
@@ -480,6 +501,50 @@ prog19 = Block
   , Return (Call "dobro" [Lit 5])
   ]
 
+-- int x = 5; retorna x;   (declaracao com tipo compativel)
+prog20 :: Stmt
+prog20 = Block
+  [ Decl TInt "x" (Lit 5)
+  , Return (Var "x")
+  ]
+
+-- int x = verdadeiro;   (erro: bool em variavel int)
+prog21 :: Stmt
+prog21 = Block
+  [ Decl TInt "x" (BLit True)
+  , Return (Var "x")
+  ]
+
+-- float y = 2;   (erro: sem conversao de int para float)
+prog22 :: Stmt
+prog22 = Block
+  [ Decl TFloat "y" (Lit 2)
+  , Return (Var "y")
+  ]
+
+-- int x = 1; x = 7; retorna x;   (atribuicao com tipo compativel)
+prog23 :: Stmt
+prog23 = Block
+  [ Decl TInt "x" (Lit 1)
+  , Assign "x" (Lit 7)
+  , Return (Var "x")
+  ]
+
+-- int x = 1; x = 2.5;   (erro: float em variavel int)
+prog24 :: Stmt
+prog24 = Block
+  [ Decl TInt "x" (Lit 1)
+  , Assign "x" (FLit 2.5)
+  , Return (Var "x")
+  ]
+
+-- int[] a = [1, 2.5];   (erro: elemento float em array de int)
+prog25 :: Stmt
+prog25 = Block
+  [ Decl (TArray TInt) "a" (ArrayLit [Lit 1, FLit 2.5])
+  , Return (Var "a")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -586,6 +651,42 @@ testParametroSobrepoeGlobal = TestCase $ do
     v <- runProg fenvExemplo prog19
     assertEqual "parametro tem prioridade sobre global de mesmo nome" (VInt 10) v
 
+-- testes de verificacao de tipo na declaracao e na atribuicao
+
+-- passa se a execucao do programa terminar com erro
+assertErro :: String -> Stmt -> Assertion
+assertErro msg prog = do
+    r <- try (runProg Map.empty prog >>= evaluate) :: IO (Either ErrorCall Value)
+    case r of
+      Left _  -> return ()
+      Right v -> assertFailure (msg ++ ", mas retornou " ++ show v)
+
+testDeclCompativel :: Test
+testDeclCompativel = TestCase $ do
+    v <- runProg Map.empty prog20
+    assertEqual "int x = 5" (VInt 5) v
+
+testDeclBoolEmInt :: Test
+testDeclBoolEmInt = TestCase $
+    assertErro "int x = verdadeiro deveria dar erro" prog21
+
+testDeclIntEmFloat :: Test
+testDeclIntEmFloat = TestCase $
+    assertErro "float y = 2 deveria dar erro" prog22
+
+testAssignCompativel :: Test
+testAssignCompativel = TestCase $ do
+    v <- runProg Map.empty prog23
+    assertEqual "int x = 1; x = 7" (VInt 7) v
+
+testAssignFloatEmInt :: Test
+testAssignFloatEmInt = TestCase $
+    assertErro "x = 2.5 em int deveria dar erro" prog24
+
+testArrayElementoIncompativel :: Test
+testArrayElementoIncompativel = TestCase $
+    assertErro "int[] a = [1, 2.5] deveria dar erro" prog25
+
 -- suite completa
 
 suite :: Test
@@ -609,6 +710,12 @@ suite = TestList
   , TestLabel "ordem dos argumentos" testOrdemArgumentos
   , TestLabel "variavel global"      testVariavelGlobal
   , TestLabel "parametro sobrepoe global" testParametroSobrepoeGlobal
+  , TestLabel "decl compativel"      testDeclCompativel
+  , TestLabel "decl bool em int"     testDeclBoolEmInt
+  , TestLabel "decl int em float"    testDeclIntEmFloat
+  , TestLabel "assign compativel"    testAssignCompativel
+  , TestLabel "assign float em int"  testAssignFloatEmInt
+  , TestLabel "array incompativel"   testArrayElementoIncompativel
   ]
 
 main :: IO ()
