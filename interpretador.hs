@@ -164,6 +164,16 @@ mesmoTipo (VBool _)  (VBool _)  = True
 mesmoTipo (VArray _) (VArray _) = True
 mesmoTipo _          _          = False
 
+-- Converte um valor para o tipo da variavel de destino na atribuicao
+converterPara :: Value -> Value -> Maybe Value
+converterPara (VInt _)   (VInt n)   = Just (VInt n)
+converterPara (VFloat _) (VFloat f) = Just (VFloat f)
+converterPara (VFloat _) (VInt n)   = Just (VFloat (fromIntegral n))
+converterPara (VInt _)   (VFloat f) = Just (VInt (truncate f))
+converterPara (VBool _)  (VBool b)  = Just (VBool b)
+converterPara (VArray _) (VArray vs) = Just (VArray vs)
+converterPara _          _          = Nothing
+
 -- ============================================================
 -- evalBinOp — permanece pura
 -- ============================================================
@@ -228,9 +238,9 @@ execStmt fenv env stmt = case stmt of
       Nothing      -> error ("Variavel nao declarada: " ++ x)
       Just vAntigo -> do
         v <- evalExpr fenv env e
-        if mesmoTipo vAntigo v
-          then return (Next (Map.insert x v env))
-          else error ("Tipo incompativel na atribuicao de " ++ x)
+        case converterPara vAntigo v of
+          Just vConv -> return (Next (Map.insert x vConv env))
+          Nothing    -> error ("Tipo incompativel na atribuicao de " ++ x)
 
   If cond t f -> do
     v <- evalExpr fenv env cond
@@ -530,7 +540,7 @@ prog23 = Block
   , Return (Var "x")
   ]
 
--- int x = 1; x = 2.5;   (erro: float em variavel int)
+-- int x = 1; x = 2.5;   (atribuicao com conversao implicita de float para int)
 prog24 :: Stmt
 prog24 = Block
   [ Decl TInt "x" (Lit 1)
@@ -543,6 +553,30 @@ prog25 :: Stmt
 prog25 = Block
   [ Decl (TArray TInt) "a" (ArrayLit [Lit 1, FLit 2.5])
   , Return (Var "a")
+  ]
+
+-- float y = 1.0; y = 7; retorna y;   (atribuicao com conversao implicita de int para float)
+prog26 :: Stmt
+prog26 = Block
+  [ Decl TFloat "y" (FLit 1.0)
+  , Assign "y" (Lit 7)
+  , Return (Var "y")
+  ]
+
+-- int x = 0; x = 3.99; retorna x;   (truncamento de 3.99 para 3)
+prog27 :: Stmt
+prog27 = Block
+  [ Decl TInt "x" (Lit 0)
+  , Assign "x" (FLit 3.99)
+  , Return (Var "x")
+  ]
+
+-- int x = 0; x = -2.7; retorna x;   (truncamento de negativo)
+prog28 :: Stmt
+prog28 = Block
+  [ Decl TInt "x" (Lit 0)
+  , Assign "x" (FLit (-2.7))
+  , Return (Var "x")
   ]
 
 -- ============================================================
@@ -679,9 +713,25 @@ testAssignCompativel = TestCase $ do
     v <- runProg Map.empty prog23
     assertEqual "int x = 1; x = 7" (VInt 7) v
 
-testAssignFloatEmInt :: Test
-testAssignFloatEmInt = TestCase $
-    assertErro "x = 2.5 em int deveria dar erro" prog24
+testAssignFloatTruncaInt :: Test
+testAssignFloatTruncaInt = TestCase $ do
+    v <- runProg Map.empty prog24
+    assertEqual "x = 2.5 em int vira 2 (truncado)" (VInt 2) v
+
+testAssignIntEmFloat :: Test
+testAssignIntEmFloat = TestCase $ do
+    v <- runProg Map.empty prog26
+    assertEqual "y = 7 em float vira 7.0" (VFloat 7.0) v
+
+testAssignFloatTrunca :: Test
+testAssignFloatTrunca = TestCase $ do
+    v <- runProg Map.empty prog27
+    assertEqual "x = 3.99 em int vira 3" (VInt 3) v
+
+testAssignFloatNegativo :: Test
+testAssignFloatNegativo = TestCase $ do
+    v <- runProg Map.empty prog28
+    assertEqual "x = -2.7 em int vira -2" (VInt (-2)) v
 
 testArrayElementoIncompativel :: Test
 testArrayElementoIncompativel = TestCase $
@@ -714,7 +764,10 @@ suite = TestList
   , TestLabel "decl bool em int"     testDeclBoolEmInt
   , TestLabel "decl int em float"    testDeclIntEmFloat
   , TestLabel "assign compativel"    testAssignCompativel
-  , TestLabel "assign float em int"  testAssignFloatEmInt
+  , TestLabel "assign float trunca int"  testAssignFloatTruncaInt
+  , TestLabel "assign int em float"  testAssignIntEmFloat
+  , TestLabel "assign float trunca"  testAssignFloatTrunca
+  , TestLabel "assign float negativo" testAssignFloatNegativo
   , TestLabel "array incompativel"   testArrayElementoIncompativel
   ]
 
