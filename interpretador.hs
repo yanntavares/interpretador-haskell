@@ -22,6 +22,7 @@ data Type
   | TBool
   | TVoid
   | TArray Type
+  | TString
   deriving (Show, Eq)
 
 data BinOp
@@ -35,6 +36,7 @@ data Expr
   | FLit  Float
   | BLit  Bool
   | ArrayLit [Expr]
+  | SLit  String
   | Var   String
   | BinE  BinOp Expr Expr
   | Not   Expr
@@ -68,6 +70,7 @@ data Value
   | VFloat  Float
   | VBool   Bool
   | VArray [Value]
+  | VString String
   | VVoid
   deriving (Show, Eq)
 
@@ -96,6 +99,7 @@ evalExpr fenv env expr = case expr of
   Lit  n -> return (VInt n)
   FLit f -> return (VFloat f)
   BLit b -> return (VBool b)
+  SLit s -> return (VString s)
 -- mapM já trata listas vazias
   ArrayLit exprs -> do
       values <- mapM (evalExpr fenv env) exprs
@@ -153,6 +157,7 @@ compativel TInt       (VInt _)    = True
 compativel TFloat     (VFloat _)  = True
 compativel TBool      (VBool _)   = True
 compativel (TArray t) (VArray vs) = all (compativel t) vs
+compativel TString    (VString _)   = True
 compativel _          _           = False
 
 -- verifica se dois valores tem o mesmo tipo (usado na atribuicao)
@@ -162,6 +167,7 @@ mesmoTipo (VInt _)   (VInt _)   = True
 mesmoTipo (VFloat _) (VFloat _) = True
 mesmoTipo (VBool _)  (VBool _)  = True
 mesmoTipo (VArray _) (VArray _) = True
+mesmoTipo (VString _) (VString _) = True
 mesmoTipo _          _          = False
 
 -- Converte um valor para o tipo da variavel de destino na atribuicao
@@ -172,6 +178,7 @@ converterPara (VFloat _) (VInt n)   = Just (VFloat (fromIntegral n))
 converterPara (VInt _)   (VFloat f) = Just (VInt (truncate f))
 converterPara (VBool _)  (VBool b)  = Just (VBool b)
 converterPara (VArray _) (VArray vs) = Just (VArray vs)
+converterPara (VString _) (VString s) = Just (VString s)
 converterPara _          _          = Nothing
 
 -- ============================================================
@@ -179,6 +186,7 @@ converterPara _          _          = Nothing
 -- ============================================================
 
 evalBinOp :: BinOp -> Value -> Value -> Value
+evalBinOp Add (VString a) (VString b) = VString (a++b)
 evalBinOp Add a b = case convert a b of
     (VInt x, VInt y)    -> VInt (x + y)
     (VFloat x, VFloat y) -> VFloat (x + y)
@@ -288,6 +296,7 @@ showValue (VInt  n) = show n
 showValue (VFloat f) = show f
 showValue (VBool b) = if b then "verdadeiro" else "falso"
 showValue (VArray vs) = "[" ++ intercalate ", " (map showValue vs) ++ "]"
+showValue (VString s) = s
 showValue VVoid     = "()"
 
 -- ============================================================
@@ -579,6 +588,50 @@ prog28 = Block
   , Return (Var "x")
   ]
 
+-- string s = "Ola"; retorna s;
+prog29 :: Stmt
+prog29 = Block
+  [ Decl TString "s" (SLit "Ola")
+  , Return (Var "s")
+  ]
+
+-- string s = "Ola"; s = "Mundo"; retorna s;
+prog30 :: Stmt
+prog30 = Block
+  [ Decl TString "s" (SLit "Ola")
+  , Assign "s" (SLit "Mundo")
+  , Return (Var "s")
+  ]
+
+-- string s = "Teste de Impressao"; imprime(s);
+prog31 :: Stmt
+prog31 = Block
+  [ Decl TString "s" (SLit "Teste de Impressao")
+  , Print (Var "s")
+  ]
+
+-- int x = "Erro"; (erro: string em variavel int)
+prog32 :: Stmt
+prog32 = Block
+  [ Decl TInt "x" (SLit "Erro")
+  , Return (Var "x")
+  ]
+
+-- string s = "Ola"; s = 10; (erro: atribuir int para var string)
+prog33 :: Stmt
+prog33 = Block
+  [ Decl TString "s" (SLit "Ola")
+  , Assign "s" (Lit 10)
+  , Return (Var "s")
+  ]
+
+-- string s = "Ola " + "Mundo"; retorna s;
+prog34 :: Stmt
+prog34 = Block
+  [ Decl TString "s" (BinE Add (SLit "Ola ") (SLit "Mundo"))
+  , Return (Var "s")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -737,6 +790,35 @@ testArrayElementoIncompativel :: Test
 testArrayElementoIncompativel = TestCase $
     assertErro "int[] a = [1, 2.5] deveria dar erro" prog25
 
+testDeclString :: Test
+testDeclString = TestCase $ do
+    v <- runProg Map.empty prog29
+    assertEqual "declaracao de string" (VString "Ola") v
+
+testAssignString :: Test
+testAssignString = TestCase $ do
+    v <- runProg Map.empty prog30
+    assertEqual "atribuicao de string" (VString "Mundo") v
+
+testPrintString :: Test
+testPrintString = TestCase $ do
+    output <- runProgIO Map.empty prog31
+    assertEqual "impressao de string" "Teste de Impressao\n" output
+
+testDeclStringIncompativel :: Test
+testDeclStringIncompativel = TestCase $
+    assertErro "int x = \"Erro\" deveria falhar" prog32
+
+testAssignStringIncompativel :: Test
+testAssignStringIncompativel = TestCase $
+    assertErro "s = 10 (em var string) deveria falhar" prog33
+
+-- Se você adicionou a regra de concatenação no evalBinOp, inclua este teste:
+testConcatString :: Test
+testConcatString = TestCase $ do
+    v <- runProg Map.empty prog34
+    assertEqual "concatenacao de strings" (VString "Ola Mundo") v
+
 -- suite completa
 
 suite :: Test
@@ -769,6 +851,12 @@ suite = TestList
   , TestLabel "assign float trunca"  testAssignFloatTrunca
   , TestLabel "assign float negativo" testAssignFloatNegativo
   , TestLabel "array incompativel"   testArrayElementoIncompativel
+  , TestLabel "decl string"            testDeclString
+  , TestLabel "assign string"          testAssignString
+  , TestLabel "print string"           testPrintString
+  , TestLabel "decl string erro"       testDeclStringIncompativel
+  , TestLabel "assign string erro"     testAssignStringIncompativel
+  , TestLabel "concat string"          testConcatString
   ]
 
 main :: IO ()
