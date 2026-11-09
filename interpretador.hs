@@ -150,8 +150,8 @@ convert (VInt a) (VFloat b) = (VFloat (fromIntegral a), VFloat b)
 convert (VFloat a) (VInt b) = (VFloat a, VFloat (fromIntegral b))
 convert (VFloat a) (VFloat b) = (VFloat a, VFloat b)
 
--- verifica se um valor pode ser guardado numa variavel do tipo declarado
--- (sem conversao: float y = 2 eh erro)
+-- verifica se um valor tem exatamente o tipo pedido (sem conversao)
+-- arrays: todos os elementos precisam ter o tipo do elemento
 compativel :: Type -> Value -> Bool
 compativel TInt       (VInt _)    = True
 compativel TFloat     (VFloat _)  = True
@@ -160,26 +160,34 @@ compativel (TArray t) (VArray vs) = all (compativel t) vs
 compativel TString    (VString _)   = True
 compativel _          _           = False
 
--- verifica se dois valores tem o mesmo tipo (usado na atribuicao)
--- limitacao: qualquer array eh aceito no lugar de outro array
-mesmoTipo :: Value -> Value -> Bool
-mesmoTipo (VInt _)   (VInt _)   = True
-mesmoTipo (VFloat _) (VFloat _) = True
-mesmoTipo (VBool _)  (VBool _)  = True
-mesmoTipo (VArray _) (VArray _) = True
-mesmoTipo (VString _) (VString _) = True
-mesmoTipo _          _          = False
+-- tipo de um valor (Nothing para array vazio: nao da para saber o tipo do elemento)
+tipoDe :: Value -> Maybe Type
+tipoDe (VInt _)       = Just TInt
+tipoDe (VFloat _)     = Just TFloat
+tipoDe (VBool _)      = Just TBool
+tipoDe (VString _)    = Just TString
+tipoDe (VArray (v:_)) = TArray <$> tipoDe v
+tipoDe _              = Nothing
+
+-- Converte um valor para um tipo (usado na declaracao)
+-- conversao implicita como em C: int -> float, e float -> int truncando
+-- arrays nao tem conversao: os elementos precisam ter exatamente o tipo do array
+converterParaTipo :: Type -> Value -> Maybe Value
+converterParaTipo TFloat (VInt n)   = Just (VFloat (fromIntegral n))
+converterParaTipo TInt   (VFloat f) = Just (VInt (truncate f))
+converterParaTipo t v
+  | compativel t v = Just v
+  | otherwise      = Nothing
 
 -- Converte um valor para o tipo da variavel de destino na atribuicao
+-- o tipo da variavel vem do valor que ela guarda; se for array vazio,
+-- o tipo do elemento eh desconhecido e qualquer array eh aceito
 converterPara :: Value -> Value -> Maybe Value
-converterPara (VInt _)   (VInt n)   = Just (VInt n)
-converterPara (VFloat _) (VFloat f) = Just (VFloat f)
-converterPara (VFloat _) (VInt n)   = Just (VFloat (fromIntegral n))
-converterPara (VInt _)   (VFloat f) = Just (VInt (truncate f))
-converterPara (VBool _)  (VBool b)  = Just (VBool b)
-converterPara (VArray _) (VArray vs) = Just (VArray vs)
-converterPara (VString _) (VString s) = Just (VString s)
-converterPara _          _          = Nothing
+converterPara vAntigo v = case tipoDe vAntigo of
+  Just t  -> converterParaTipo t v
+  Nothing -> case (vAntigo, v) of
+               (VArray _, VArray _) -> Just v
+               _                    -> Nothing
 
 -- ============================================================
 -- evalBinOp — permanece pura
@@ -237,9 +245,9 @@ execStmt fenv env stmt = case stmt of
 
   Decl t x e -> do
     v <- evalExpr fenv env e
-    if compativel t v
-      then return (Next (Map.insert x v env))
-      else error ("Tipo incompativel na declaracao de " ++ x)
+    case converterParaTipo t v of
+      Just vConv -> return (Next (Map.insert x vConv env))
+      Nothing    -> error ("Tipo incompativel na declaracao de " ++ x)
 
   Assign x e ->
     case Map.lookup x env of
@@ -534,7 +542,7 @@ prog21 = Block
   , Return (Var "x")
   ]
 
--- float y = 2;   (erro: sem conversao de int para float)
+-- float y = 2; retorna y;   (int convertido para float na declaracao)
 prog22 :: Stmt
 prog22 = Block
   [ Decl TFloat "y" (Lit 2)
@@ -630,6 +638,37 @@ prog34 :: Stmt
 prog34 = Block
   [ Decl TString "s" (BinE Add (SLit "Ola ") (SLit "Mundo"))
   , Return (Var "s")
+  ]
+
+-- int x = 2.5; retorna x;   (float truncado para int na declaracao)
+prog35 :: Stmt
+prog35 = Block
+  [ Decl TInt "x" (FLit 2.5)
+  , Return (Var "x")
+  ]
+
+-- int[] a = [1]; a = [2.5];   (erro: array de float em array de int)
+prog36 :: Stmt
+prog36 = Block
+  [ Decl (TArray TInt) "a" (ArrayLit [Lit 1])
+  , Assign "a" (ArrayLit [FLit 2.5])
+  , Return (Var "a")
+  ]
+
+-- int[] a = [1]; a = [verdadeiro];   (erro: array de bool em array de int)
+prog37 :: Stmt
+prog37 = Block
+  [ Decl (TArray TInt) "a" (ArrayLit [Lit 1])
+  , Assign "a" (ArrayLit [BLit True])
+  , Return (Var "a")
+  ]
+
+-- int[] a = [1]; a = [2, 3]; retorna a;   (array do mesmo tipo eh aceito)
+prog38 :: Stmt
+prog38 = Block
+  [ Decl (TArray TInt) "a" (ArrayLit [Lit 1])
+  , Assign "a" (ArrayLit [Lit 2, Lit 3])
+  , Return (Var "a")
   ]
 
 -- ============================================================
@@ -758,8 +797,14 @@ testDeclBoolEmInt = TestCase $
     assertErro "int x = verdadeiro deveria dar erro" prog21
 
 testDeclIntEmFloat :: Test
-testDeclIntEmFloat = TestCase $
-    assertErro "float y = 2 deveria dar erro" prog22
+testDeclIntEmFloat = TestCase $ do
+    v <- runProg Map.empty prog22
+    assertEqual "float y = 2 vira 2.0" (VFloat 2.0) v
+
+testDeclFloatTruncaInt :: Test
+testDeclFloatTruncaInt = TestCase $ do
+    v <- runProg Map.empty prog35
+    assertEqual "int x = 2.5 vira 2 (truncado)" (VInt 2) v
 
 testAssignCompativel :: Test
 testAssignCompativel = TestCase $ do
@@ -789,6 +834,19 @@ testAssignFloatNegativo = TestCase $ do
 testArrayElementoIncompativel :: Test
 testArrayElementoIncompativel = TestCase $
     assertErro "int[] a = [1, 2.5] deveria dar erro" prog25
+
+testAssignArrayFloatEmInt :: Test
+testAssignArrayFloatEmInt = TestCase $
+    assertErro "a = [2.5] em int[] deveria dar erro" prog36
+
+testAssignArrayBoolEmInt :: Test
+testAssignArrayBoolEmInt = TestCase $
+    assertErro "a = [verdadeiro] em int[] deveria dar erro" prog37
+
+testAssignArrayCompativel :: Test
+testAssignArrayCompativel = TestCase $ do
+    v <- runProg Map.empty prog38
+    assertEqual "int[] a = [1]; a = [2, 3]" (VArray [VInt 2, VInt 3]) v
 
 testDeclString :: Test
 testDeclString = TestCase $ do
@@ -857,6 +915,10 @@ suite = TestList
   , TestLabel "decl string erro"       testDeclStringIncompativel
   , TestLabel "assign string erro"     testAssignStringIncompativel
   , TestLabel "concat string"          testConcatString
+  , TestLabel "decl float trunca int"  testDeclFloatTruncaInt
+  , TestLabel "assign array float em int" testAssignArrayFloatEmInt
+  , TestLabel "assign array bool em int"  testAssignArrayBoolEmInt
+  , TestLabel "assign array compativel"   testAssignArrayCompativel
   ]
 
 main :: IO ()
