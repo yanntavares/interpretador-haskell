@@ -306,9 +306,9 @@ execStmt fenv env stmt = case stmt of
     return (Next env)
 
   Print e -> do
-    v <- evalExpr fenv env e
+    (v, env') <- evalExprE fenv env e
     putStrLn (showValue v)
-    return (Next env)
+    return (Next env')
 
   Decl t x e -> do
     (v, env') <- evalExprE fenv env e
@@ -320,9 +320,9 @@ execStmt fenv env stmt = case stmt of
     case Map.lookup x env of
       Nothing      -> error ("Variavel nao declarada: " ++ x)
       Just vAntigo -> do
-        v <- evalExpr fenv env e
+        (v, env') <- evalExprE fenv env e
         case converterPara vAntigo v of
-          Just vConv -> return (Next (Map.insert x vConv env))
+          Just vConv -> return (Next (Map.insert x vConv env'))
           Nothing    -> error ("Tipo incompativel na atribuicao de " ++ x)
 
   If cond t f -> do
@@ -792,6 +792,23 @@ prog41 = Block
   , Return (Var "g")
   ]
 
+-- int g = 0; imprime(incG()); retorna g;   (global atualizada em Print)
+prog43 :: Stmt
+prog43 = Block
+  [ Decl TInt "g" (Lit 0)
+  , Print (Call "incG" [])
+  , Return (Var "g")
+  ]
+
+-- int g = 0; int x = 0; x = incG(); retorna g;   (global atualizada em Assign)
+prog44 :: Stmt
+prog44 = Block
+  [ Decl TInt "g" (Lit 0)
+  , Decl TInt "x" (Lit 0)
+  , Assign "x" (Call "incG" [])
+  , Return (Var "g")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -919,6 +936,16 @@ testGlobalAtualizadaEmDecl :: Test
 testGlobalAtualizadaEmDecl = TestCase $ do
     v <- runProg fenvGlobalMut prog41
     assertEqual "int x = incG() + incG() deixa g = 2" (VInt 2) v
+
+testGlobalAtualizadaEmPrint :: Test
+testGlobalAtualizadaEmPrint = TestCase $ do
+    v <- runProg fenvGlobalMut prog43
+    assertEqual "imprime(incG()) deixa g = 1" (VInt 1) v
+
+testGlobalAtualizadaEmAssign :: Test
+testGlobalAtualizadaEmAssign = TestCase $ do
+    v <- runProg fenvGlobalMut prog44
+    assertEqual "x = incG() deixa g = 1" (VInt 1) v
 
 -- testes de verificacao de tipo na declaracao e na atribuicao
 
@@ -1062,6 +1089,8 @@ suite = TestList
   , TestLabel "assign array float em int" testAssignArrayFloatEmInt
   , TestLabel "assign array bool em int"  testAssignArrayBoolEmInt
   , TestLabel "assign array compativel"   testAssignArrayCompativel
+  , TestLabel "global atualizada em print" testGlobalAtualizadaEmPrint
+  , TestLabel "global atualizada em assign" testGlobalAtualizadaEmAssign
   , TestLabel "global atualizada em decl" testGlobalAtualizadaEmDecl
   , TestLabel "global visivel no proximo arg" testGlobalVisivelNoProximoArg
   , TestLabel "global lida antes de atualizar" testGlobalLidaAntesDeAtualizar
