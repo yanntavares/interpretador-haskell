@@ -326,10 +326,10 @@ execStmt fenv env stmt = case stmt of
           Nothing    -> error ("Tipo incompativel na atribuicao de " ++ x)
 
   If cond t f -> do
-    v <- evalExpr fenv env cond
+    (v, env') <- evalExprE fenv env cond
     case v of
-      VBool True  -> execStmt fenv env t
-      VBool False -> execStmt fenv env f
+      VBool True  -> execStmt fenv env' t
+      VBool False -> execStmt fenv env' f
       _           -> error "Condicao do If nao eh booleana"
 
   Return e -> do
@@ -340,11 +340,11 @@ execStmt fenv env stmt = case stmt of
     execBlock fenv env stmts
 
   While cond body -> do
-    v <- evalExpr fenv env cond
+    (v, envC) <- evalExprE fenv env cond
     case v of
-      VBool False -> return (Next env)
+      VBool False -> return (Next envC)
       VBool True  -> do
-        r <- execStmt fenv env body
+        r <- execStmt fenv envC body
         case r of
           Returned v' env' -> return (Returned v' env')
           Next        env' -> execStmt fenv env' (While cond body)
@@ -809,6 +809,28 @@ prog44 = Block
   , Return (Var "g")
   ]
 
+-- int g = 0; se (incG() == 1) retorna g senao retorna 0;   (global atualizada na condicao do If)
+prog45 :: Stmt
+prog45 = Block
+  [ Decl TInt "g" (Lit 0)
+  , If (BinE Eq (Call "incG" []) (Lit 1))
+       (Return (Var "g"))
+       (Return (Lit 0))
+  ]
+
+-- int g = 0; int i = 0;
+-- enquanto (i < 3 && incG() < 100) { i = i + 1; } retorna g;
+-- (global atualizada na condicao do While, a cada iteracao)
+prog46 :: Stmt
+prog46 = Block
+  [ Decl TInt "g" (Lit 0)
+  , Decl TInt "i" (Lit 0)
+  , While (BinE And (BinE Lt (Var "i") (Lit 3))
+                    (BinE Lt (Call "incG" []) (Lit 100)))
+      (Assign "i" (BinE Add (Var "i") (Lit 1)))
+  , Return (Var "g")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -946,6 +968,16 @@ testGlobalAtualizadaEmAssign :: Test
 testGlobalAtualizadaEmAssign = TestCase $ do
     v <- runProg fenvGlobalMut prog44
     assertEqual "x = incG() deixa g = 1" (VInt 1) v
+
+testGlobalAtualizadaEmIf :: Test
+testGlobalAtualizadaEmIf = TestCase $ do
+    v <- runProg fenvGlobalMut prog45
+    assertEqual "condicao do if com incG() deixa g = 1" (VInt 1) v
+
+testGlobalAtualizadaEmWhile :: Test
+testGlobalAtualizadaEmWhile = TestCase $ do
+    v <- runProg fenvGlobalMut prog46
+    assertEqual "condicao do while avaliada 4 vezes deixa g = 4" (VInt 4) v
 
 -- testes de verificacao de tipo na declaracao e na atribuicao
 
@@ -1089,6 +1121,8 @@ suite = TestList
   , TestLabel "assign array float em int" testAssignArrayFloatEmInt
   , TestLabel "assign array bool em int"  testAssignArrayBoolEmInt
   , TestLabel "assign array compativel"   testAssignArrayCompativel
+  , TestLabel "global atualizada em if" testGlobalAtualizadaEmIf
+  , TestLabel "global atualizada em while" testGlobalAtualizadaEmWhile
   , TestLabel "global atualizada em print" testGlobalAtualizadaEmPrint
   , TestLabel "global atualizada em assign" testGlobalAtualizadaEmAssign
   , TestLabel "global atualizada em decl" testGlobalAtualizadaEmDecl
