@@ -141,6 +141,73 @@ evalExpr fenv env expr = case expr of
               Next _       -> return VVoid
 
 -- ============================================================
+-- Avaliação de Expressões propagando o ambiente (evalExpr permanece igual)
+-- ============================================================
+
+-- Como evalExpr, mas devolve tambem o ambiente depois da avaliacao,
+-- para que globais alteradas por chamadas de funcao valham na sequencia.
+-- Casos sem sub-expressoes com efeito delegam para evalExpr.
+evalExprE :: FunEnv -> Env -> Expr -> IO (Value, Env)
+evalExprE fenv env expr = case expr of
+
+  ArrayLit exprs -> do
+    (values, env') <- evalArgs fenv env exprs
+    return (VArray values, env')
+
+  Not e -> do
+    (v, env') <- evalExprE fenv env e
+    case v of
+      VBool b -> return (VBool (not b), env')
+      _       -> error "Not aplicado a nao-booleano"
+
+  BinE op l r -> do
+    (vl, env1) <- evalExprE fenv env l
+    (vr, env2) <- evalExprE fenv env1 r
+    return (evalBinOp op vl vr, env2)
+
+  Call fname args ->
+    case Map.lookup fname fenv of
+      Nothing  -> error ("Funcao nao declarada: " ++ fname)
+      Just fun -> do
+        let nparams = length (funParams fun)
+            nargs   = length args
+        if nparams /= nargs
+          then error ("Funcao " ++ fname ++ " espera " ++
+                      show nparams ++ " argumentos, recebeu " ++
+                      show nargs)
+          else do
+            (vals, env1) <- evalArgs fenv env args
+            let params   = map snd (funParams fun)
+                envLocal = Map.union (Map.fromList (zip params vals)) env1
+            result <- execStmt fenv envLocal (funBody fun)
+            case result of
+              Returned v envF -> return (v,     mergeGlobais params env1 envF)
+              Next envF       -> return (VVoid, mergeGlobais params env1 envF)
+
+  _ -> do
+    v <- evalExpr fenv env expr
+    return (v, env)
+
+-- Avalia uma lista de expressoes da esquerda para a direita, passando o
+-- ambiente de cada uma para a seguinte
+evalArgs :: FunEnv -> Env -> [Expr] -> IO ([Value], Env)
+evalArgs _    env []     = return ([], env)
+evalArgs fenv env (e:es) = do
+  (v,  env1) <- evalExprE fenv env e
+  (vs, env2) <- evalArgs fenv env1 es
+  return (v : vs, env2)
+
+-- Devolve ao chamador as alteracoes que a funcao fez nas variaveis que ele
+-- ja tinha, exceto os parametros (que sao locais da funcao)
+mergeGlobais :: [String] -> Env -> Env -> Env
+mergeGlobais params envChamador envFinal =
+  Map.mapWithKey atualiza envChamador
+  where
+    atualiza k v
+      | k `elem` params = v
+      | otherwise       = Map.findWithDefault v k envFinal
+
+-- ============================================================
 -- Funções auxiliares
 -- ============================================================
 
@@ -266,8 +333,8 @@ execStmt fenv env stmt = case stmt of
       _           -> error "Condicao do If nao eh booleana"
 
   Return e -> do
-    v <- evalExpr fenv env e
-    return (Returned v env)
+    (v, env') <- evalExprE fenv env e
+    return (Returned v env')
 
   Block stmts ->
     execBlock fenv env stmts
@@ -376,6 +443,23 @@ funSomaGlobal = FunDecl
   , funBody   = Return (BinE Add (Var "x") (Var "g"))
   }
 
+-- int incG() { g = g + 1; retorna g; }   (altera a global g)
+funIncG :: FunDecl
+funIncG = FunDecl
+  { funName   = "incG"
+  , funParams = []
+  , funBody   = Block [ Assign "g" (BinE Add (Var "g") (Lit 1))
+                      , Return (Var "g") ]
+  }
+
+-- int usaParam(int g) { g = 99; retorna g; }   (g eh parametro, nao global)
+funUsaParam :: FunDecl
+funUsaParam = FunDecl
+  { funName   = "usaParam"
+  , funParams = [(TInt, "g")]
+  , funBody   = Block [ Assign "g" (Lit 99), Return (Var "g") ]
+  }
+
 fenvExemplo :: FunEnv
 fenvExemplo = Map.fromList
   [ ("dobro",    funDobro)
@@ -385,6 +469,13 @@ fenvExemplo = Map.fromList
 
 fenvGlobal :: FunEnv
 fenvGlobal = Map.insert "somaGlobal" funSomaGlobal fenvExemplo
+
+fenvGlobalMut :: FunEnv
+fenvGlobalMut = Map.fromList
+  [ ("soma",     funSoma)
+  , ("incG",     funIncG)
+  , ("usaParam", funUsaParam)
+  ]
 
 fenvOrdem :: FunEnv
 fenvOrdem = Map.insert "imprime" funImprime fenvExemplo
@@ -671,6 +762,28 @@ prog38 = Block
   , Return (Var "a")
   ]
 
+-- int g = 0; retorna soma(incG(), g);   (g atualizado vale para o proximo argumento)
+prog39 :: Stmt
+prog39 = Block
+  [ Decl TInt "g" (Lit 0)
+  , Return (Call "soma" [Call "incG" [], Var "g"])
+  ]
+
+-- int g = 0; retorna soma(g, incG());   (g lido antes de ser atualizado)
+prog40 :: Stmt
+prog40 = Block
+  [ Decl TInt "g" (Lit 0)
+  , Return (Call "soma" [Var "g", Call "incG" []])
+  ]
+
+-- int g = 5; int x = usaParam(1); retorna g;   (parametro g nao altera a global)
+prog42 :: Stmt
+prog42 = Block
+  [ Decl TInt "g" (Lit 5)
+  , Decl TInt "x" (Call "usaParam" [Lit 1])
+  , Return (Var "g")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -776,6 +889,23 @@ testParametroSobrepoeGlobal :: Test
 testParametroSobrepoeGlobal = TestCase $ do
     v <- runProg fenvExemplo prog19
     assertEqual "parametro tem prioridade sobre global de mesmo nome" (VInt 10) v
+
+-- testes de global atualizada durante a avaliacao dos argumentos
+
+testGlobalVisivelNoProximoArg :: Test
+testGlobalVisivelNoProximoArg = TestCase $ do
+    v <- runProg fenvGlobalMut prog39
+    assertEqual "soma(incG(), g) com g = 0 eh 1 + 1" (VInt 2) v
+
+testGlobalLidaAntesDeAtualizar :: Test
+testGlobalLidaAntesDeAtualizar = TestCase $ do
+    v <- runProg fenvGlobalMut prog40
+    assertEqual "soma(g, incG()) com g = 0 eh 0 + 1" (VInt 1) v
+
+testParametroNaoAlteraGlobal :: Test
+testParametroNaoAlteraGlobal = TestCase $ do
+    v <- runProg fenvGlobalMut prog42
+    assertEqual "parametro g nao altera a global g" (VInt 5) v
 
 -- testes de verificacao de tipo na declaracao e na atribuicao
 
@@ -919,6 +1049,9 @@ suite = TestList
   , TestLabel "assign array float em int" testAssignArrayFloatEmInt
   , TestLabel "assign array bool em int"  testAssignArrayBoolEmInt
   , TestLabel "assign array compativel"   testAssignArrayCompativel
+  , TestLabel "global visivel no proximo arg" testGlobalVisivelNoProximoArg
+  , TestLabel "global lida antes de atualizar" testGlobalLidaAntesDeAtualizar
+  , TestLabel "parametro nao altera global" testParametroNaoAlteraGlobal
   ]
 
 main :: IO ()
