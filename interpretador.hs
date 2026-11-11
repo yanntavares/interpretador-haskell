@@ -311,9 +311,9 @@ execStmt fenv env stmt = case stmt of
     return (Next env)
 
   Decl t x e -> do
-    v <- evalExpr fenv env e
+    (v, env') <- evalExprE fenv env e
     case converterParaTipo t v of
-      Just vConv -> return (Next (Map.insert x vConv env))
+      Just vConv -> return (Next (Map.insert x vConv env'))
       Nothing    -> error ("Tipo incompativel na declaracao de " ++ x)
 
   Assign x e ->
@@ -784,6 +784,14 @@ prog42 = Block
   , Return (Var "g")
   ]
 
+-- int g = 0; int x = incG() + incG(); retorna g;   (global atualizada em BinE)
+prog41 :: Stmt
+prog41 = Block
+  [ Decl TInt "g" (Lit 0)
+  , Decl TInt "x" (BinE Add (Call "incG" []) (Call "incG" []))
+  , Return (Var "g")
+  ]
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -906,6 +914,11 @@ testParametroNaoAlteraGlobal :: Test
 testParametroNaoAlteraGlobal = TestCase $ do
     v <- runProg fenvGlobalMut prog42
     assertEqual "parametro g nao altera a global g" (VInt 5) v
+
+testGlobalAtualizadaEmDecl :: Test
+testGlobalAtualizadaEmDecl = TestCase $ do
+    v <- runProg fenvGlobalMut prog41
+    assertEqual "int x = incG() + incG() deixa g = 2" (VInt 2) v
 
 -- testes de verificacao de tipo na declaracao e na atribuicao
 
@@ -1049,6 +1062,7 @@ suite = TestList
   , TestLabel "assign array float em int" testAssignArrayFloatEmInt
   , TestLabel "assign array bool em int"  testAssignArrayBoolEmInt
   , TestLabel "assign array compativel"   testAssignArrayCompativel
+  , TestLabel "global atualizada em decl" testGlobalAtualizadaEmDecl
   , TestLabel "global visivel no proximo arg" testGlobalVisivelNoProximoArg
   , TestLabel "global lida antes de atualizar" testGlobalLidaAntesDeAtualizar
   , TestLabel "parametro nao altera global" testParametroNaoAlteraGlobal
