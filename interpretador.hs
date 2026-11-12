@@ -264,38 +264,46 @@ converterPara vAntigo v = case tipoDe vAntigo of
 evalBinOp :: BinOp -> Value -> Value -> Value
 evalBinOp Add (VString a) (VString b) = VString (a++b)
 evalBinOp Add a b = case convert a b of
-    (VInt x, VInt y)    -> VInt (x + y)
+    (VInt x, VInt y)     -> VInt (x + y)
     (VFloat x, VFloat y) -> VFloat (x + y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Add)
 evalBinOp Sub a b = case convert a b of
-    (VInt x, VInt y)    -> VInt (x - y)
+    (VInt x, VInt y)     -> VInt (x - y)
     (VFloat x, VFloat y) -> VFloat (x - y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Sub)
 evalBinOp Mul a b = case convert a b of
-    (VInt x, VInt y)    -> VInt (x * y)
+    (VInt x, VInt y)     -> VInt (x * y)
     (VFloat x, VFloat y) -> VFloat (x * y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Mul)
 evalBinOp Div a b = case convert a b of
-    (VInt x, VInt y)    -> VInt (x `div` y)
+    (VInt x, VInt y)     -> VInt (x `div` y)
     (VFloat x, VFloat y) -> VFloat (x / y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Div)
 evalBinOp Mod a b = case convert a b of
     (VInt x, VInt y)     -> VInt (x `mod` y)
     _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Mod)
 evalBinOp Eq  va vb = let (a', b') = convert va vb in VBool (a' == b')
 evalBinOp Neq va vb = let (a', b') = convert va vb in VBool (a' /= b')
 evalBinOp Lt  a b = case convert a b of
-    (VInt x, VInt y)    -> VBool (x < y)
+    (VInt x, VInt y)     -> VBool (x < y)
     (VFloat x, VFloat y) -> VBool (x < y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Lt)
 evalBinOp Gt  a b = case convert a b of
-    (VInt x, VInt y)    -> VBool (x > y)
+    (VInt x, VInt y)     -> VBool (x > y)
     (VFloat x, VFloat y) -> VBool (x > y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Gt)
 evalBinOp Le  a b = case convert a b of
-    (VInt x, VInt y)    -> VBool (x <= y)
+    (VInt x, VInt y)     -> VBool (x <= y)
     (VFloat x, VFloat y) -> VBool (x <= y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Le)
 evalBinOp Ge  a b = case convert a b of
-    (VInt x, VInt y)    -> VBool (x >= y)
+    (VInt x, VInt y)     -> VBool (x >= y)
     (VFloat x, VFloat y) -> VBool (x >= y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Ge)
 evalBinOp And (VBool a) (VBool b) = VBool (a && b)
 evalBinOp Or  (VBool a) (VBool b) = VBool (a || b)
 evalBinOp op  _         _         =
-  error ("Operacao invalida ou tipos incompativeis: " ++ show op)
+    error ("Operacao invalida ou tipos incompativeis: " ++ show op)
 
 -- ============================================================
 -- Execução de Statements
