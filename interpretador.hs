@@ -841,6 +841,30 @@ prog46 = Block
   , Return (Var "g")
   ]
 
+  -- retorna 1 + verdadeiro; (erro: tipos incompativeis)
+prog47 :: Stmt
+prog47 = Return (BinE Add (Lit 1) (BLit True))
+
+-- retorna 1 < verdadeiro; (erro: tipos incompativeis)
+prog48 :: Stmt
+prog48 = Return (BinE Lt (Lit 1) (BLit True))
+
+-- retorna 1 == 1.0; (deve promover o int e retornar verdadeiro)
+prog49 :: Stmt
+prog49 = Return (BinE Eq (Lit 1) (FLit 1.0))
+
+-- retorna 1 != 1.0; (deve promover o int e retornar falso)
+prog50 :: Stmt
+prog50 = Return (BinE Neq (Lit 1) (FLit 1.0))
+
+-- retorna "teste" == "teste"; (strings iguais)
+prog51 :: Stmt
+prog51 = Return (BinE Eq (SLit "teste") (SLit "teste"))
+
+-- retorna [1] == [1]; (arrays iguais)
+prog52 :: Stmt
+prog52 = Return (BinE Eq (ArrayLit [Lit 1]) (ArrayLit [Lit 1]))
+
 -- ============================================================
 -- Suite de testes HUnit
 -- ============================================================
@@ -1089,6 +1113,34 @@ testConcatString = TestCase $ do
     v <- runProg Map.empty prog34
     assertEqual "concatenacao de strings" (VString "Ola Mundo") v
 
+testErroAddTiposIncompativeis :: Test
+testErroAddTiposIncompativeis = TestCase $
+    assertErro "Soma de Int e Bool deve lançar erro" prog47
+
+testErroLtTiposIncompativeis :: Test
+testErroLtTiposIncompativeis = TestCase $
+    assertErro "Comparacao (<) de Int e Bool deve lancar erro" prog48
+
+testEqIntFloat :: Test
+testEqIntFloat = TestCase $ do
+    v <- runProg Map.empty prog49
+    assertEqual "1 == 1.0 deve ser verdadeiro" (VBool True) v
+
+testNeqIntFloat :: Test
+testNeqIntFloat = TestCase $ do
+    v <- runProg Map.empty prog50
+    assertEqual "1 != 1.0 deve ser falso" (VBool False) v
+
+testEqString :: Test
+testEqString = TestCase $ do
+    v <- runProg Map.empty prog51
+    assertEqual "\"teste\" == \"teste\" deve ser verdadeiro" (VBool True) v
+
+testEqArray :: Test
+testEqArray = TestCase $ do
+    v <- runProg Map.empty prog52
+    assertEqual "[1] == [1] deve ser verdadeiro" (VBool True) v
+
 -- suite completa
 
 suite :: Test
@@ -1139,6 +1191,12 @@ suite = TestList
   , TestLabel "global visivel no proximo arg" testGlobalVisivelNoProximoArg
   , TestLabel "global lida antes de atualizar" testGlobalLidaAntesDeAtualizar
   , TestLabel "parametro nao altera global" testParametroNaoAlteraGlobal
+  , TestLabel "erro add tipos incompativeis" testErroAddTiposIncompativeis
+  , TestLabel "erro lt tipos incompativeis" testErroLtTiposIncompativeis
+  , TestLabel "eq int float" testEqIntFloat
+  , TestLabel "neq int float" testNeqIntFloat
+  , TestLabel "eq string" testEqString
+  , TestLabel "eq array" testEqArray
   ]
 
 main :: IO ()
