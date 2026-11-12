@@ -216,6 +216,7 @@ convert (VInt a) (VInt b) = (VInt a, VInt b)
 convert (VInt a) (VFloat b) = (VFloat (fromIntegral a), VFloat b)
 convert (VFloat a) (VInt b) = (VFloat a, VFloat (fromIntegral b))
 convert (VFloat a) (VFloat b) = (VFloat a, VFloat b)
+convert a b = (a, b)
 
 -- verifica se um valor tem exatamente o tipo pedido (sem conversao)
 -- arrays: todos os elementos precisam ter o tipo do elemento
@@ -275,9 +276,10 @@ evalBinOp Div a b = case convert a b of
     (VInt x, VInt y)    -> VInt (x `div` y)
     (VFloat x, VFloat y) -> VFloat (x / y)
 evalBinOp Mod a b = case convert a b of
-    (VInt x, VInt y)    -> VInt (x `mod` y)
-evalBinOp Eq  va        vb        = VBool (va == vb)
-evalBinOp Neq va        vb        = VBool (va /= vb)
+    (VInt x, VInt y)     -> VInt (x `mod` y)
+    _                    -> error ("Operacao invalida ou tipos incompativeis: " ++ show Mod)
+evalBinOp Eq  va vb = let (a', b') = convert va vb in VBool (a' == b')
+evalBinOp Neq va vb = let (a', b') = convert va vb in VBool (a' /= b')
 evalBinOp Lt  a b = case convert a b of
     (VInt x, VInt y)    -> VBool (x < y)
     (VFloat x, VFloat y) -> VBool (x < y)
